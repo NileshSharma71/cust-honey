@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  honeypot:
+    build: .
+    container_name: honeypot
+    restart: unless-stopped
+    environment:
+      PORTS: "2222"
+      BIND_ADDR: "0.0.0.0"
+      HP_USERNAME: "admin"
+      HP_PASSWORD: "PASSWORD"
+    ports:
+      - "2222:2222"
+    volumes:
+      - ./logs:/app/logs
+      - ./static:/app/static
