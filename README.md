@@ -90,5 +90,4 @@ Configuration is done primarily via environment variables:
 
 MIT License — see `LICENSE`.
 
-
 ---
