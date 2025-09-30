@@ -1,0 +1,61 @@
+2025-09-30 10:16:22.399 - INFO - SSH honeypot listening on 127.0.0.1:2222
+2025-09-30 10:16:51.243 - INFO - 127.0.0.1 connected to server.
+2025-09-30 10:16:58.196 - ERROR - Exception in client_handle for 127.0.0.1: [WinError 10054] An existing connection was forcibly closed by the remote host
+2025-09-30 10:17:01.391 - INFO - 127.0.0.1 connected to server.
+2025-09-30 10:17:21.567 - INFO - Client 127.0.0.1 attempted connection with username: admin, password: P@ssw0rd
+2025-09-30 10:17:24.153 - INFO - No channel opened for 127.0.0.1
+2025-09-30 10:17:37.991 - INFO - 127.0.0.1 connected to server.
+2025-09-30 10:17:53.151 - INFO - Client 127.0.0.1 attempted connection with username: admin, password: P@ssw0rd
+2025-09-30 10:17:57.442 - INFO - No channel opened for 127.0.0.1
+2025-09-30 10:18:28.996 - INFO - 127.0.0.1 connected to server.
+2025-09-30 10:18:34.697 - INFO - Client 127.0.0.1 attempted connection with username: admin, password: PASSWORD
+2025-09-30 10:18:47.020 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:18:49.581 - INFO - Client 127.0.0.1 ran: 
+2025-09-30 10:19:09.846 - INFO - Client 127.0.0.1 ran: cat file1.txt
+2025-09-30 10:19:23.685 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:19:26.659 - INFO - Client 127.0.0.1 ran: ls -l
+2025-09-30 10:21:49.455 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:21:58.664 - INFO - Client 127.0.0.1 ran: cat file1.txt
+2025-09-30 10:22:10.086 - INFO - Client 127.0.0.1 ran: [A[Bcat README.md
+2025-09-30 10:31:53.584 - INFO - SSH honeypot listening on 127.0.0.1:2222
+2025-09-30 10:33:44.154 - INFO - 127.0.0.1 connected to server.
+2025-09-30 10:33:49.205 - INFO - Client 127.0.0.1 attempted connection with username: admin, password: PASSWORD
+2025-09-30 10:34:04.109 - INFO - Client 127.0.0.1 ran: asdaasuka
+2025-09-30 10:34:07.331 - INFO - Client 127.0.0.1 ran: 
+2025-09-30 10:35:12.791 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:35:16.845 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:35:29.096 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:35:36.605 - INFO - Client 127.0.0.1 ran: cat fi
+2025-09-30 10:35:45.145 - INFO - Client 127.0.0.1 ran: cat fi
+2025-09-30 10:35:52.224 - INFO - Client 127.0.0.1 ran: cat file1.txt
+2025-09-30 10:40:40.091 - INFO - SSH honeypot listening on 127.0.0.1:2222
+2025-09-30 10:47:38.251 - INFO - 127.0.0.1 connected to server.
+2025-09-30 10:47:44.210 - INFO - Client 127.0.0.1 attempted connection with username: admin, password: PASSWORD
+2025-09-30 10:47:50.539 - INFO - Client 127.0.0.1 ran: a
+2025-09-30 10:47:52.249 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:47:55.704 - INFO - Client 127.0.0.1 ran: ls -l
+2025-09-30 10:48:24.658 - INFO - Client 127.0.0.1 ran: whoami
+2025-09-30 10:52:42.596 - INFO - SSH honeypot listening on 127.0.0.1:2222
+2025-09-30 10:53:04.579 - INFO - 127.0.0.1 connected to server.
+2025-09-30 10:53:11.053 - INFO - Client 127.0.0.1 attempted connection with username: admin, password: PASSWORD
+2025-09-30 10:53:14.955 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:53:21.900 - INFO - Client 127.0.0.1 ran: 
+2025-09-30 10:53:36.144 - INFO - Client 127.0.0.1 ran: 
+2025-09-30 10:53:54.219 - INFO - Client 127.0.0.1 ran: whoami
+2025-09-30 10:53:58.038 - INFO - Client 127.0.0.1 ran: time
+2025-09-30 10:54:00.681 - INFO - Client 127.0.0.1 ran: date
+2025-09-30 10:54:13.586 - INFO - Client 127.0.0.1 ran: asdasd
+2025-09-30 10:56:34.631 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 10:56:42.941 - INFO - Client 127.0.0.1 ran: cat file.tct
+2025-09-30 10:56:52.406 - INFO - Client 127.0.0.1 ran: cat file1.txt
+2025-09-30 10:57:02.753 - INFO - Client 127.0.0.1 ran: cat
+2025-09-30 10:57:59.113 - INFO - Client 127.0.0.1 ran: exit
+2025-09-30 11:09:00.460 - INFO - SSH honeypot listening on 127.0.0.1:2222
+2025-09-30 11:09:08.152 - INFO - 127.0.0.1 connected to server.
+2025-09-30 11:09:12.668 - INFO - Client 127.0.0.1 attempted connection with username: admin, password: PASSWORD
+2025-09-30 11:09:17.349 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 11:09:40.546 - INFO - Client 127.0.0.1 ran: jasndkajd
+2025-09-30 11:10:18.678 - INFO - 127.0.0.1 connected to server.
+2025-09-30 11:10:24.507 - INFO - Client 127.0.0.1 attempted connection with username: admin, password: PASSWORD
+2025-09-30 11:10:32.681 - INFO - Client 127.0.0.1 ran: ls
+2025-09-30 11:10:40.044 - INFO - Client 127.0.0.1 ran: whoami

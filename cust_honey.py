@@ -6,14 +6,14 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import paramiko
-from prompt_toolkit import PromptSession
-from prompt_toolkit.patch_stdout import patch_stdout
+import re
+
 # ----------------------
 # Constants & base paths
 # ----------------------
 SSH_BANNER = "SSH-2.0-MySSHServer_1.0"
 
-# Hardcoded enforced credentials (you asked these to be hardcoded)
+# Hardcoded enforced credentials
 ALLOWED_USERNAME = "admin"
 ALLOWED_PASSWORD = "PASSWORD"
 
@@ -114,13 +114,11 @@ def ensure_host_key(path: Path):
         try:
             return paramiko.RSAKey(filename=str(path))
         except Exception:
-            # try to regenerate if unreadable
             try:
                 path.unlink(missing_ok=True)
             except Exception:
                 pass
 
-    # generate new key
     creds_logger.info(f"Generating new SSH host key at {path}")
     key = paramiko.RSAKey.generate(2048)
     key.write_private_key_file(str(path))
@@ -160,8 +158,7 @@ class Server(paramiko.ServerInterface):
         )
         creds_logger.info(f"{self.client_ip},{username},{password}")
 
-        # Enforce the hardcoded allowed credentials (ALLOWED_USERNAME / ALLOWED_PASSWORD).
-        # Only that exact pair will succeed; all others fail.
+        # Enforce the hardcoded allowed credentials
         if username == ALLOWED_USERNAME and password == ALLOWED_PASSWORD:
             self.authenticated_username = username
             return paramiko.AUTH_SUCCESSFUL
@@ -192,17 +189,46 @@ class Server(paramiko.ServerInterface):
         return True
 
 # ----------------------
+# Helper to skip ANSI/CSI escape sequences
+# ----------------------
+CSI_RE = re.compile(rb'\x1b\[[0-9;?]*[A-Za-z]')
+
+def _skip_escape_sequence(data: bytes, start: int) -> int:
+    """
+    Given raw data and index at an ESC (27), return the index after skipping a
+    likely escape/CSI sequence. This is a conservative skip: it advances until
+    it sees a terminating ASCII letter or runs out of bytes.
+    """
+    i = start
+    ln = len(data)
+    # if next byte suggests CSI or 'O' style
+    if i + 1 < ln and data[i + 1] in (ord('['), ord('O')):
+        j = i + 2
+        while j < ln and not (65 <= data[j] <= 122):  # A..z
+            j += 1
+        if j < ln:
+            return j + 1
+        return j
+    # fallback: skip single ESC
+    return i + 1
+
+# ----------------------
 # Fake interactive shell
 # ----------------------
 def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
     """
-    Interactive fake shell: improved, robust per-line handling while keeping
-    support for backspace/Ctrl-U/Ctrl-W semantics as before.
+    Interactive fake shell: sanitized so that arrow keys and other terminal
+    escape sequences do NOT allow the remote to move the cursor or edit prior output.
+    The server still maintains an internal buffer (so backspace/Ctrl-U/Ctrl-W work
+    server-side) and logs final commands as before.
     """
     try:
         # welcome banner + initial prompt
-        channel.send("Welcome to Ubuntu 22.04 LTS (mock)\r\n")
-        channel.send(prompt)
+        try:
+            channel.send("Welcome to Ubuntu 22.04 LTS (mock)\r\n")
+            channel.send(prompt)
+        except Exception:
+            pass
 
         buffer = b""
         while True:
@@ -215,8 +241,18 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
             if not data:
                 break
 
-            # per-byte processing (keep behavior you implemented)
-            for byte in data:
+            # Process incoming bytes with an index so we can skip ESC sequences safely.
+            i = 0
+            ln = len(data)
+            while i < ln:
+                byte = data[i]
+
+                # ESC (start of escape sequences) -> skip the whole sequence (do NOT echo or apply)
+                if byte == 27:  # 0x1b
+                    i = _skip_escape_sequence(data, i)
+                    # continue without echoing or modifying buffer
+                    continue
+
                 # Ctrl-C (interrupt)
                 if byte == 3:
                     buffer = b""
@@ -225,6 +261,7 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
                         channel.send(prompt)
                     except Exception:
                         pass
+                    i += 1
                     continue
 
                 # Ctrl-U (kill entire line)
@@ -235,9 +272,10 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
                         channel.send(prompt)
                     except Exception:
                         pass
+                    i += 1
                     continue
 
-                # Ctrl-W (delete last word)
+                # Ctrl-W (delete last word) - update server buffer; redraw prompt+buffer (no cursor tricks)
                 if byte == 23:
                     if buffer:
                         s = buffer.decode("latin-1")
@@ -247,32 +285,50 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
                             buffer = b""
                         else:
                             buffer = s[:idx].encode("latin-1")
-                        # redraw line: CR + prompt + current buffer
+                        # redraw line: CR + prompt + current buffer (this rewrites, but we don't allow cursor moves)
                         try:
                             channel.send("\r")
                             channel.send(prompt + buffer.decode("latin-1"))
                         except Exception:
                             pass
+                    i += 1
                     continue
 
-                # Backspace / DEL
+                # Backspace / DEL (update server-side buffer, but DO NOT echo backspace escape to client)
                 if byte in (8, 127):
                     if buffer:
                         buffer = buffer[:-1]
                         try:
-                            channel.send("\b \b")
+                            channel.send("\b \b")  # move cursor back, overwrite with space, move cursor back again
                         except Exception:
                             pass
+                    i += 1
                     continue
 
-                # Normal printable bytes: append and echo (latin-1 preserves raw bytes)
-                buffer += bytes([byte])
-                try:
-                    channel.send(bytes([byte]).decode("latin-1"))
-                except Exception:
-                    pass
+                # Newline or carriage return -> treat as line terminator
+                if byte in (10, 13):
+                    # append the newline so we can partition buffer below
+                    buffer += bytes([byte])
+                    i += 1
+                    # now handle full lines below outside this per-byte loop
+                    continue
 
-            # handle complete lines (LF or CR)
+                # Printable ASCII -> append and echo
+                if 32 <= byte <= 126 or byte == 9:  # include tab
+                    buffer += bytes([byte])
+                    try:
+                        # echo the printable char so the remote sees typing, but because ESC sequences were skipped,
+                        # they cannot move cursor around previously printed text.
+                        channel.send(bytes([byte]).decode("latin-1"))
+                    except Exception:
+                        pass
+                    i += 1
+                    continue
+
+                # Other control bytes: ignore/display nothing
+                i += 1
+
+            # handle complete lines (LF or CR) in buffer
             while b"\n" in buffer or b"\r" in buffer:
                 # support either LF or CR as line terminator
                 if b"\n" in buffer:
@@ -286,13 +342,13 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
                 except Exception:
                     cmd = "<unreadable>"
 
-                # logging
+                # logging (unchanged)
                 funnel_logger.info(f"Client {client_ip} ran: {cmd}")
                 creds_logger.info(f"{client_ip},CMD,{cmd}")
 
                 lower = cmd.lower()
 
-                # handle commands (cleaned up, combined handlers)
+                # All outputs now explicitly start with "\r\n" so they appear on the next line.
                 if cmd == "" or cmd == "\x03":
                     try:
                         channel.send("\r\n")
@@ -302,43 +358,39 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
                 elif lower.startswith("ls"):
                     if "-l" in lower or "-la" in lower or "-al" in lower:
                         try:
-                            channel.send(
-                                "total 8\n-rw-r--r-- 1 root root  0 Sep 17 12:00 file1.txt\n"
-                                "-rw-r--r-- 1 root root 47 Sep 17 12:00 README.md\r\n"
-                            )
+                            channel.send("\r\ntotal 8\r\n-rw-r--r-- 1 root root  0 Sep 17 12:00 file1.txt\r\n"
+                                         "-rw-r--r-- 1 root root 47 Sep 17 12:00 README.md\r\n")
                         except Exception:
                             pass
                     else:
                         try:
-                            channel.send("file1.txt  README.md\r\n")
+                            channel.send("\r\nfile1.txt  README.md\r\n")
                         except Exception:
                             pass
 
                 elif lower in ("ll", "ls -la"):
                     try:
-                        channel.send(
-                            "total 8\n-rw-r--r-- 1 root root  0 Sep 17 12:00 file1.txt\n"
-                            "-rw-r--r-- 1 root root 47 Sep 17 12:00 README.md\r\n"
-                        )
+                        channel.send("\r\ntotal 8\r\n-rw-r--r-- 1 root root  0 Sep 17 12:00 file1.txt\r\n"
+                                     "-rw-r--r-- 1 root root 47 Sep 17 12:00 README.md\r\n")
                     except Exception:
                         pass
 
                 elif lower == "whoami":
                     chname = username if username else "ubuntu"
                     try:
-                        channel.send(f"{chname}\r\n")
+                        channel.send(f"\r\n{chname}\r\n")
                     except Exception:
                         pass
 
                 elif lower == "id":
                     try:
-                        channel.send("uid=0(root) gid=0(root) groups=0(root)\r\n")
+                        channel.send("\r\nuid=0(root) gid=0(root) groups=0(root)\r\n")
                     except Exception:
                         pass
 
                 elif lower == "pwd":
                     try:
-                        channel.send("/root\r\n")
+                        channel.send("\r\n/root\r\n")
                     except Exception:
                         pass
 
@@ -346,15 +398,15 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
                     target = cmd[4:].strip().strip('"').strip("'")
                     try:
                         if "sshd_config" in target:
-                            channel.send(FAKE_SSHD_CONFIG + "\r\n")
+                            channel.send("\r\n" + FAKE_SSHD_CONFIG + "\r\n")
                         elif "auth.log" in target:
-                            channel.send(FAKE_AUTH_LOG + "\r\n")
+                            channel.send("\r\n" + FAKE_AUTH_LOG + "\r\n")
                         elif "/etc/passwd" in target:
-                            channel.send("root:x:0:0:root:/root:/bin/bash\n")
+                            channel.send("\r\nroot:x:0:0:root:/root:/bin/bash\r\n")
                         elif "server.key" in target:
-                            channel.send("-----BEGIN RSA PRIVATE KEY-----\nMII...mock...\n-----END RSA PRIVATE KEY-----\r\n")
+                            channel.send("\r\n-----BEGIN RSA PRIVATE KEY-----\nMII...mock...\n-----END RSA PRIVATE KEY-----\r\n")
                         else:
-                            channel.send(f"cat: {target or ''}: No such file or directory\r\n")
+                            channel.send(f"\r\ncat: {target or ''}: No such file or directory\r\n")
                     except Exception:
                         pass
 
@@ -369,97 +421,98 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
                                 n = 10
                                 if "-n" in parts:
                                     try:
-                                        i = parts.index("-n")
-                                        n = int(parts[i + 1])
+                                        idx = parts.index("-n")
+                                        n = int(parts[idx + 1])
                                     except Exception:
                                         n = 10
                                 lines = _lines_tail(FAKE_AUTH_LOG, n)
-                                channel.send("\n".join(lines) + "\r\n")
+                                channel.send("\r\n" + "\n".join(lines) + "\r\n")
                             elif cmdbase == "head":
                                 n = 10
                                 if "-n" in parts:
                                     try:
-                                        i = parts.index("-n")
-                                        n = int(parts[i + 1])
+                                        idx = parts.index("-n")
+                                        n = int(parts[idx + 1])
                                     except Exception:
                                         n = 10
                                 lines = _lines_head(FAKE_AUTH_LOG, n)
-                                channel.send("\n".join(lines) + "\r\n")
+                                channel.send("\r\n" + "\n".join(lines) + "\r\n")
                             elif cmdbase == "grep":
                                 pattern = parts[1].strip('"').strip("'") if len(parts) > 1 else ""
                                 matches = _grep_lines(FAKE_AUTH_LOG, pattern)
                                 if matches:
-                                    channel.send("\n".join(matches) + "\r\n")
+                                    channel.send("\r\n" + "\n".join(matches) + "\r\n")
                                 else:
-                                    channel.send("")  # no matches
+                                    channel.send("\r\n")  # no matches -> just new line
                         except Exception:
                             pass
                     else:
-                        # quiet fallback (no output)
+                        # quiet fallback (no output but ensure newline)
                         try:
-                            channel.send("")
+                            channel.send("\r\n")
                         except Exception:
                             pass
 
                 elif lower == "uname -a":
                     try:
-                        channel.send("Linux ubuntu 5.15.0-100-generic #101-Ubuntu SMP x86_64 GNU/Linux\r\n")
+                        channel.send("\r\nLinux ubuntu 5.15.0-100-generic #101-Ubuntu SMP x86_64 GNU/Linux\r\n")
                     except Exception:
                         pass
 
                 elif lower == "ps" or lower.startswith("ps "):
                     try:
-                        channel.send("  PID TTY          TIME CMD\n    1 ?        00:00:00 systemd\n  100 ?        00:00:00 sshd\n")
+                        channel.send("\r\n  PID TTY          TIME CMD\r\n    1 ?        00:00:00 systemd\r\n  100 ?        00:00:00 sshd\r\n")
                     except Exception:
                         pass
 
                 elif lower == "df -h":
                     try:
-                        channel.send("Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1        40G  4.0G   34G  11% /\r\n")
+                        channel.send("\r\nFilesystem      Size  Used Avail Use% Mounted on\r\n/dev/sda1        40G  4.0G   34G  11% /\r\n")
                     except Exception:
                         pass
 
                 elif lower == "free -h":
                     try:
-                        channel.send(
-                            "              total        used        free      shared  buff/cache   available\n"
-                            "Mem:           7.7Gi       1.2Gi       5.8Gi       100Mi       700Mi       6.1Gi\r\n"
-                        )
+                        channel.send("\r\n              total        used        free      shared  buff/cache   available\r\n"
+                                     "Mem:           7.7Gi       1.2Gi       5.8Gi       100Mi       700Mi       6.1Gi\r\n")
                     except Exception:
                         pass
 
                 elif lower == "who":
                     try:
-                        channel.send("root     pts/0        2025-09-21 10:00 (:0)\r\n")
+                        channel.send("\r\nroot     pts/0        2025-09-21 10:00 (:0)\r\n")
                     except Exception:
                         pass
 
                 elif lower == "last":
                     try:
-                        channel.send("root     pts/0        127.0.0.1    Mon Sep 21 10:00   still logged in\r\n")
+                        channel.send("\r\nroot     pts/0        127.0.0.1    Mon Sep 21 10:00   still logged in\r\n")
                     except Exception:
                         pass
 
                 elif lower.startswith("echo "):
                     try:
                         to_echo = cmd[5:].strip()
-                        channel.send(f"{to_echo}\r\n")
+                        channel.send(f"\r\n{to_echo}\r\n")
                     except Exception:
                         pass
 
                 elif lower.startswith(("mkdir ", "touch ", "rm ")):
-                    # pretend success silently (no stdout)
-                    pass
+                    # pretend success silently (no stdout) but ensure prompt redraw stays correct
+                    try:
+                        channel.send("\r\n")
+                    except Exception:
+                        pass
 
                 elif lower == "uptime":
                     try:
-                        channel.send(" 10:00:00 up 1 day,  3:42,  2 users,  load average: 0.00, 0.01, 0.05\r\n")
+                        channel.send("\r\n 10:00:00 up 1 day,  3:42,  2 users,  load average: 0.00, 0.01, 0.05\r\n")
                     except Exception:
                         pass
 
                 elif lower == "exit":
                     try:
-                        channel.send("\nGoodbye!\n")
+                        channel.send("\r\nGoodbye!\r\n")
                         channel.close()
                     except Exception:
                         pass
@@ -468,7 +521,7 @@ def emulated_shell(channel, client_ip, username=None, prompt="root@ubuntu:~# "):
                 else:
                     safe_cmd = cmd if cmd else "<empty>"
                     try:
-                        channel.send(f"bash: {safe_cmd}: command not found\r\n")
+                        channel.send(f"\r\nbash: {safe_cmd}: command not found\r\n")
                     except Exception:
                         pass
 
