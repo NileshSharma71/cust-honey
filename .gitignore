@@ -1,0 +1,21 @@
+# logs and runtime
+/logs/
+app/logs/
+*.log
+
+# static keys / secrets
+/static/server.key
+/static/*.pem
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.env/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
