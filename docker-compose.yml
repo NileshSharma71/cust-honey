@@ -1,17 +1,46 @@
 version: "3.8"
 
 services:
-  honeypot:
+  cust-honey:
     build: .
-    container_name: honeypot
+    image: cust-honey:latest
+    container_name: cust-honey
     restart: unless-stopped
-    environment:
-      PORTS: "2222"
-      BIND_ADDR: "0.0.0.0"
-      HP_USERNAME: "admin"
-      HP_PASSWORD: "PASSWORD"
     ports:
-      - "2222:2222"
+      # host 2222 -> container 22 (default safe mapping). Change to "22:22" only if host SSH moved.
+      - "${HOST_PORT:-2222}:22"
+    environment:
+      # Attacker-visible credentials (override in .env or with -e)
+      - HP_USERNAME=${HP_USERNAME:-admin}
+      - HP_PASSWORD=${HP_PASSWORD:-PASSWORD}
+      - PORTS=${PORTS:-2222}
+      - BIND_ADDR=${BIND_ADDR:-0.0.0.0}
     volumes:
+      # Persist logs to host (change host path as needed)
       - ./logs:/app/logs
-      - ./static:/app/static
+      - ./static:/app/static:ro
+    # Hardening / reduced write surface
+    read_only: true
+    tmpfs:
+      - /tmp:rw
+      - /run:rw
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    networks:
+      - cust-net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "sh", "-c", "ss -ltn | grep ':22' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  cust-net:
+    driver: bridge
